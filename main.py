@@ -1,7 +1,8 @@
 import datetime
 import pandas as pd
 import numpy as np
-import re # Импортируем модуль для регулярных выражений
+import re
+import matplotlib.pyplot as plt
 
 def process_dataframe(file_path, column_names):
     """
@@ -691,13 +692,19 @@ if not df_srez.empty and \
     df_srez_sorted['prev_slice_date'] = df_srez_sorted.groupby('operation_id')['Дата записи среза'].shift(1)
     df_srez_sorted['prev_start_date'] = df_srez_sorted.groupby('operation_id')['Дата и время начала операции'].shift(1)
 
+    # ДОБАВЛЕНО: Переименовываем колонки для вывода на русском языке
+    df_srez_sorted.rename(columns={
+        'prev_slice_date': 'Предыдущая дата среза',
+        'prev_start_date': 'Предыдущая дата начала операции'
+    }, inplace=True)
+
     # Фильтруем строки, где есть предыдущие значения для сравнения (т.е. где был хотя бы один предыдущий срез для этой операции)
-    shifts_df = df_srez_sorted.dropna(subset=['prev_slice_date', 'prev_start_date']).copy()
+    shifts_df = df_srez_sorted.dropna(subset=['Предыдущая дата среза', 'Предыдущая дата начала операции']).copy()
 
     if not shifts_df.empty:
         # Рассчитываем сдвиг в днях
         # Сдвиг = текущая_дата_начала - предыдущая_дата_начала
-        shifts_df['Сдвиг в днях'] = (shifts_df['Дата и время начала операции'] - shifts_df['prev_start_date']).dt.days
+        shifts_df['Сдвиг в днях'] = (shifts_df['Дата и время начала операции'] - shifts_df['Предыдущая дата начала операции']).dt.days
 
         # Определяем направление сдвига
         shifts_df['Направление сдвига'] = shifts_df['Сдвиг в днях'].apply(
@@ -705,16 +712,16 @@ if not df_srez.empty and \
         )
 
         print("\nОбнаружены сдвиги даты начала операций (первые 20 строк):")
-        # Выводим только самые важные колонки для краткости
+        # Выводим только самые важные колонки для краткости, используя новые названия
         print(shifts_df[[
             'Номер заказа на производство',
             'Номер операции',
             'Название операции',
             'Артикул номенклатуры',
             'Дата записи среза',
-            'prev_slice_date',
+            'Предыдущая дата среза', # Обновлено
             'Дата и время начала операции',
-            'prev_start_date',
+            'Предыдущая дата начала операции', # Обновлено
             'Сдвиг в днях',
             'Направление сдвига'
         ]].head(20).to_string()) # Используем .head(20) для вывода части, а не всего
@@ -740,9 +747,9 @@ if not df_srez.empty and \
             'Название операции',
             'Артикул номенклатуры',
             'Дата записи среза',
-            'prev_slice_date',
+            'Предыдущая дата среза', # Обновлено
             'Дата и время начала операции',
-            'prev_start_date',
+            'Предыдущая дата начала операции', # Обновлено
             'Сдвиг в днях',
             'Направление сдвига'
         ]].to_string())
@@ -753,3 +760,309 @@ else:
     print("DataFrame 'df_srez' пуст или отсутствуют необходимые колонки для анализа сдвигов (например, 'Номер заказа на производство', 'Номер операции', 'Дата записи среза', 'Дата и время начала операции', 'Название операции', 'Артикул номенклатуры').")
 
 print("\n--- Анализ сдвигов и задержек завершен. ---")
+
+# --- Поиск ошибок: Несоответствие операции и ШГО ---
+print("\n--- Поиск ошибок: Несоответствие операции и ШГО ---")
+
+if not df_srez.empty and \
+   'Название операции' in df_srez.columns and \
+   'ШГО – вид оборудования' in df_srez.columns:
+
+    # 1. Определим известные некорректные пары Операция-ШГО
+    # Это пример. Вам нужно будет заполнить его в соответствии с вашей логикой.
+    # Ключ: название операции (или часть названия), Значение: список ШГО, на которых она НЕ ДОЛЖНА выполняться
+    incorrect_operation_shgo_mapping = {
+        'Сварка': ['Карусельный станок', 'Фрезерный станок', 'Токарный станок'],
+        'Фрезеровка': ['Сварочный пост', 'Участок сборки'],
+        'Сборка': ['Карусельный станок', 'Фрезерный станок'],
+        # Добавьте сюда другие правила, если есть.
+        # Например: 'Покраска': ['Токарный станок', 'Сварочный пост']
+    }
+
+    # Создадим пустой список для хранения обнаруженных ошибок
+    found_errors = []
+
+    # Проходим по каждой строке DataFrame
+    for index, row in df_srez.iterrows():
+        operation_name = str(row['Название операции']) if pd.notna(row['Название операции']) else ''
+        shgo_type = str(row['ШГО – вид оборудования']) if pd.notna(row['ШГО – вид оборудования']) else ''
+
+        # Ищем совпадения операции с ключами в incorrect_operation_shgo_mapping
+        # Используем re.IGNORECASE для поиска без учета регистра
+        # и re.search для частичного совпадения (например, "сварка" найдет "Дуг. Сварка")
+        for op_keyword, disallowed_shgo_list in incorrect_operation_shgo_mapping.items():
+            if re.search(op_keyword, operation_name, re.IGNORECASE):
+                # Если операция соответствует ключевому слову, проверяем ШГО
+                for disallowed_shgo in disallowed_shgo_list:
+                    if re.search(disallowed_shgo, shgo_type, re.IGNORECASE):
+                        found_errors.append({
+                            'Номер заказа на производство': row.get('Номер заказа на производство', 'N/A'),
+                            'Номер операции': row.get('Номер операции', 'N/A'),
+                            'Название операции': operation_name,
+                            'ШГО – вид оборудования': shgo_type,
+                            'Ошибка': f"Операция '{operation_name}' ошибочно назначена на ШГО '{shgo_type}'."
+                        })
+                        # Как только нашли ошибку для этой строки, переходим к следующей
+                        break # Выходим из внутреннего цикла по disallowed_shgo_list
+                if found_errors and found_errors[-1]['Номер операции'] == row.get('Номер операции', 'N/A'): # Проверяем, добавлена ли ошибка
+                    break # Выходим из цикла по incorrect_operation_shgo_mapping
+
+
+    if found_errors:
+        errors_df = pd.DataFrame(found_errors)
+        print("\nОбнаружены потенциальные ошибки в назначении операций на ШГО:")
+        print(errors_df.to_string(index=False))
+        # errors_df.to_csv("operation_shgo_errors.csv", index=False, encoding="utf-8-sig")
+        # print("\nСписок ошибок сохранен в 'operation_shgo_errors.csv'")
+    else:
+        print("Ошибок в назначении операций на ШГО по заданным правилам не обнаружено.")
+
+else:
+    print("DataFrame 'df_srez' пуст или отсутствуют колонки 'Название операции' или 'ШГО – вид оборудования'. Поиск ошибок невозможен.")
+
+print("\n--- Поиск ошибок завершен. ---")
+
+print("\n--- Поиск необычных комбинаций 'Название операции' и 'ШГО – вид оборудования' ---")
+
+if not df_srez.empty and \
+   'Название операции' in df_srez.columns and \
+   'ШГО – вид оборудования' in df_srez.columns and \
+   'Рабочий станок' in df_srez.columns: # <--- Проверка на наличие 'Рабочий станок'
+
+    # Создаем временный DataFrame, исключая NaN в ключевых колонках
+    df_anomaly_analysis = df_srez.dropna(subset=[
+        'Название операции',
+        'ШГО – вид оборудования',
+        'Рабочий станок' # <--- Используем 'Рабочий станок'
+    ]).copy()
+
+    if not df_anomaly_analysis.empty:
+        # Группируем по комбинациям операции, ШГО и Рабочему станку и считаем их количество
+        operation_shgo_machine_counts = df_anomaly_analysis.groupby([
+            'Название операции',
+            'ШГО – вид оборудования',
+            'Рабочий станок' # <--- Используем 'Рабочий станок'
+        ]).size().reset_index(name='Количество операций').sort_values(by='Количество операций', ascending=True)
+
+        print("\nТоп-20 самых редких комбинаций 'Название операции', 'ШГО – вид оборудования' и 'Рабочий станок':")
+        print(operation_shgo_machine_counts.head(20).to_string(index=False))
+
+        print("\nЭти комбинации встречаются редко и могут быть потенциальными аномалиями или ошибками, которые требуют ручной проверки.")
+        print("Обратите внимание на пары с очень малым 'Количеством операций' по сравнению с другими.")
+
+    else:
+        print("Нет достаточных данных для анализа комбинаций операции, ШГО и рабочего станка после фильтрации строк с отсутствующими значениями.")
+else:
+    print("DataFrame 'df_srez' пуст или отсутствуют колонки 'Название операции', 'ШГО – вид оборудования' или 'Рабочий станок'. Поиск необычных комбинаций невозможен.")
+
+print("\n--- Поиск необычных комбинаций завершен. ---")
+
+print("\n--- Анализ загрузки ШГО по периодам для поиска оптимального времени ---")
+
+if not df_srez.empty and \
+   'Дата записи среза' in df_srez.columns and \
+   'ШГО – вид оборудования' in df_srez.columns and \
+   'Общая трудоемкость' in df_srez.columns:
+
+    # Создаем временный DataFrame, исключая NaN в ключевых колонках
+    df_shgo_period_analysis = df_srez.dropna(subset=[
+        'Дата записи среза',
+        'ШГО – вид оборудования',
+        'Общая трудоемкость'
+    ]).copy()
+
+    if not df_shgo_period_analysis.empty:
+        # Извлекаем месяц из 'Дата записи среза'
+        df_shgo_period_analysis['Месяц'] = df_shgo_period_analysis['Дата записи среза'].dt.to_period('M')
+
+        print("\nРасчет средней ежемесячной загрузки по 'ШГО – вид оборудования':")
+
+        # Группируем по ШГО и Месяцу, затем считаем среднюю трудоемкость
+        # Используем .unstack(), чтобы сделать месяцы колонками для более удобного просмотра
+        monthly_shgo_load = df_shgo_period_analysis.groupby([
+            'ШГО – вид оборудования',
+            'Месяц'
+        ])['Общая трудоемкость'].sum().unstack(fill_value=0) # sum() или mean() в зависимости от того, что нужно
+
+        # Добавляем строку с общей средней загрузкой по ШГО для сравнения
+        monthly_shgo_load['Общая Средняя Загрузка'] = monthly_shgo_load.mean(axis=1)
+        # Сортируем по общей средней загрузке для удобства
+        monthly_shgo_load = monthly_shgo_load.sort_values(by='Общая Средняя Загрузка', ascending=False)
+
+
+        print(monthly_shgo_load.head(20).to_string()) # Выводим первые 20 ШГО
+
+        print("\nПримечания по интерпретации:")
+        print(" - Высокие значения в конкретных месяцах указывают на пиковую загрузку ШГО.")
+        print(" - Низкие значения или нули могут быть оптимальным временем для планового обслуживания, отпусков персонала или высвобождения ресурсов.")
+        print(" - 'Общая Средняя Загрузка' дает представление о типичной загрузке ШГО за весь период.")
+        print("Для более глубокого анализа рекомендуется визуализация данных (например, тепловые карты или линейные графики).")
+
+        # Также можно сохранить эту таблицу:
+        # monthly_shgo_load.to_csv("monthly_shgo_load.csv", encoding="utf-8-sig")
+        # print("\nЕжемесячная загрузка ШГО сохранена в 'monthly_shgo_load.csv'")
+
+    else:
+        print("Нет достаточных данных для анализа загрузки ШГО по периодам после фильтрации строк с отсутствующими значениями.")
+else:
+    print("DataFrame 'df_srez' пуст или отсутствуют необходимые колонки ('Дата записи среза', 'ШГО – вид оборудования', 'Общая трудоемкость'). Анализ загрузки по периодам невозможен.")
+
+print("\n--- Анализ загрузки ШГО по периодам завершен. ---")
+
+# --- Анализ закрытия факта для поиска тенденции развития организации ---
+print("\n--- Анализ закрытия факта для поиска тенденции развития организации ---")
+
+if not df_fakt.empty and \
+   'Дата закрытия операции' in df_fakt.columns and \
+   'Закрытая трудоемкость' in df_fakt.columns:
+
+    # Создаем временный DataFrame, исключая NaN в ключевых колонках
+    df_fakt_trend_analysis = df_fakt.dropna(subset=[
+        'Дата закрытия операции',
+        'Закрытая трудоемкость'
+    ]).copy()
+
+    if not df_fakt_trend_analysis.empty:
+        # Устанавливаем 'Дата закрытия операции' как индекс для временных рядов
+        df_fakt_trend_analysis = df_fakt_trend_analysis.set_index('Дата закрытия операции')
+
+        print("\nЕженедельная динамика закрытой трудоемкости:")
+        # Агрегация по неделям (суммируем трудоемкость за каждую неделю)
+        weekly_fakt_workload_trend = df_fakt_trend_analysis['Закрытая трудоемкость'].resample('W').sum()
+        print(weekly_fakt_workload_trend.to_string())
+
+        print("\nЕжемесячная динамика закрытой трудоемкости:")
+        # Агрегация по месяцам (суммируем трудоемкость за каждый месяц)
+        monthly_fakt_workload_trend = df_fakt_trend_analysis['Закрытая трудоемкость'].resample('ME').sum()
+        print(monthly_fakt_workload_trend.to_string())
+
+        print("\nПримечания по интерпретации:")
+        print(" - Рост значений указывает на увеличение объемов выполненных работ (рост производительности или объемов заказов).")
+        print(" - Снижение может говорить о замедлении работы, сезонности, снижении заказов или проблемах в процессах.")
+        print(" - Для полного понимания тенденций крайне рекомендуется визуализация этих данных (линейные графики), а также сравнение с плановыми показателями.")
+
+        # Опционально: сохранение данных для дальнейшего анализа
+        # weekly_fakt_workload_trend.to_csv("weekly_fakt_trend.csv", encoding="utf-8-sig")
+        # monthly_fakt_workload_trend.to_csv("monthly_fakt_trend.csv", encoding="utf-8-sig")
+
+    else:
+        print("Нет достаточных данных для анализа тенденций закрытия факта после фильтрации строк с отсутствующими значениями.")
+else:
+    print("DataFrame 'df_fakt' пуст или отсутствуют необходимые колонки ('Дата закрытия операции', 'Закрытая трудоемкость'). Анализ тенденций закрытия факта невозможен.")
+
+print("\n--- Анализ тенденций закрытия факта завершен. ---")
+
+# --- Прогноз выполнимости среза от 01.02.2025 на основе временных рядов ---
+print("\n--- Прогноз выполнимости среза от 01.02.2025 на основе временных рядов ---")
+
+try:
+    from prophet import Prophet
+    import logging
+    logging.getLogger('prophet').setLevel(logging.WARNING)
+    prophet_available = True
+except ImportError:
+    print("Библиотека 'prophet' не найдена. Для выполнения прогноза установите ее: pip install prophet")
+    prophet_available = False
+
+try:
+    matplotlib_available = True
+except ImportError:
+    print("Библиотека 'matplotlib' не найдена. Рекомендуется установить для визуализации: pip install matplotlib")
+    matplotlib_available = False
+
+
+if prophet_available and not df_srez.empty and \
+   'Дата записи среза' in df_srez.columns and \
+   'Общая трудоемкость' in df_srez.columns:
+
+    df_forecast_analysis = df_srez.dropna(subset=[
+        'Дата записи среза',
+        'Общая трудоемкость'
+    ]).copy()
+
+    df_forecast_analysis['Дата записи среза'] = pd.to_datetime(df_forecast_analysis['Дата записи среза'], errors='coerce')
+    df_forecast_analysis.dropna(subset=['Дата записи среза'], inplace=True)
+    df_forecast_analysis = df_forecast_analysis[df_forecast_analysis['Общая трудоемкость'] >= 0]
+
+
+    if not df_forecast_analysis.empty:
+        daily_workload = df_forecast_analysis.groupby('Дата записи среза')['Общая трудоемкость'].sum().reset_index()
+        daily_workload.columns = ['ds', 'y']
+
+        # --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Логарифмическая трансформация 'y' ---
+        # Добавляем 1 перед логарифмированием, чтобы избежать log(0)
+        daily_workload['y'] = np.log1p(daily_workload['y'])
+
+        # --- Визуализация исторических данных (после трансформации) ---
+        if matplotlib_available:
+            print("\nВизуализация исторических данных 'Общая трудоемкость' (после лог-трансформации):")
+            plt.figure(figsize=(12, 6))
+            plt.plot(daily_workload['ds'], daily_workload['y'])
+            plt.title('Историческая Общая Трудоемкость (лог-трансформация) по датам')
+            plt.xlabel('Дата')
+            plt.ylabel('Лог(Общая трудоемкость + 1)')
+            plt.grid(True)
+            plt.show()
+            print("На графике 'Общая трудоемкость (лог-трансформация)': есть ли по-прежнему сильный нисходящий тренд к концу?")
+
+
+        train_data = daily_workload.copy()
+
+        if not train_data.empty:
+            print(f"\nПоследняя дата в обучающих данных: {train_data['ds'].max().strftime('%Y-%m-%d')}")
+
+        if train_data.empty:
+            print("Нет данных для обучения модели. Прогноз невозможен.")
+        else:
+            model = Prophet(
+                weekly_seasonality=True,
+                daily_seasonality=False,
+                yearly_seasonality=False,
+                changepoint_prior_scale=0.01
+            )
+            model.fit(train_data)
+
+            future_dates = model.make_future_dataframe(periods=30, include_history=False, freq='D')
+
+            if future_dates.empty or future_dates['ds'].min() > pd.to_datetime('2025-03-03'):
+                print(f"Не удалось создать осмысленные будущие даты для прогноза. Проверьте диапазон исторических данных. Последняя дата в обучающей выборке: {train_data['ds'].max() if not train_data.empty else 'N/A'}")
+            else:
+                forecast = model.predict(future_dates)
+
+                forecast['yhat'] = np.maximum(0, np.expm1(forecast['yhat']))
+                forecast['yhat_lower'] = np.maximum(0, np.expm1(forecast['yhat_lower']))
+                forecast['yhat_upper'] = np.maximum(0, np.expm1(forecast['yhat_upper']))
+
+                forecast_start_date_target = pd.to_datetime('2025-02-02')
+                if forecast['ds'].min() > forecast_start_date_target:
+                    print(f"ВНИМАНИЕ: Прогноз начинается с {forecast['ds'].min().strftime('%Y-%m-%d')}, а не с {forecast_start_date_target.strftime('%Y-%m-%d')}, так как обучающие данные заканчиваются раньше.")
+                elif forecast['ds'].min() < forecast_start_date_target:
+                    forecast = forecast[forecast['ds'] >= forecast_start_date_target]
+
+                # --- ИЗМЕНЕНИЕ: Переименование колонок для вывода ---
+                forecast_display = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].copy()
+                forecast_display.columns = ['Дата', 'Прогноз трудоемкости', 'Нижняя граница (95% ДИ)', 'Верхняя граница (95% ДИ)']
+
+                print(f"\nПрогноз общей трудоемкости на ближайшие {len(forecast_display)} дней (начиная с первой доступной даты после 01.02.2025):")
+                print(forecast_display.to_string(index=False))
+
+                print("\nПримечания по интерпретации прогноза:")
+                print(" - 'Дата': Дата прогноза.")
+                print(" - 'Прогноз трудоемкости': Прогнозируемое значение общей трудоемкости.")
+                print(" - 'Нижняя граница (95% ДИ)' / 'Верхняя граница (95% ДИ)': Нижняя и верхняя границы 95% доверительного интервала (диапазон, в котором, вероятно, будет находиться фактическое значение).")
+                print(" - Этот прогноз основан на всех доступных исторических данных (до последней даты в данных).")
+                print(" - Все прогнозируемые значения принудительно установлены на 0, если модель спрогнозировала отрицательное значение (трудоемкость не может быть < 0).")
+                print(" - Начало прогноза может быть сдвинуто, если исторических данных недостаточно до 01.02.2025.")
+                print(" - Годовая сезонность отключена из-за предположительно небольшого объема исторических данных.")
+                print(" - Параметр changepoint_prior_scale уменьшен для более плавного тренда.")
+                print(" - Для более точного анализа рекомендуется визуализировать прогноз с историческими данными.")
+
+    else:
+        print("Нет достаточных данных для построения прогноза после фильтрации строк с отсутствующими значениями.")
+else:
+    if not prophet_available:
+        print("Прогноз не выполнен, так как библиотека 'prophet' не установлена.")
+    else:
+        print("DataFrame 'df_srez' пуст или отсутствуют необходимые колонки ('Дата записи среза', 'Общая трудоемкость'). Прогноз невозможен.")
+
+print("\n--- Прогноз выполнимости среза завершен. ---")
