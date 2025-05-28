@@ -422,9 +422,10 @@ if not df_srez.empty:
     if 'main_department' in df_srez.columns and 'sub_department' in df_srez.columns and 'Общая трудоемкость' in df_srez.columns:
         print("\nСредняя и медианная загрузка по участкам (Срезы):")
         avg_median_workload_srez_dept = \
-        df_srez.dropna(subset=['main_department', 'sub_department', 'Общая трудоемкость']).groupby(
-            ['main_department', 'sub_department'])['Общая трудоемкость'].agg(['mean', 'median']).sort_values(by='mean',
-                                                                                                             ascending=False)
+            df_srez.dropna(subset=['main_department', 'sub_department', 'Общая трудоемкость']).groupby(
+                ['main_department', 'sub_department'])['Общая трудоемкость'].agg(['mean', 'median']).sort_values(
+                by='mean',
+                ascending=False)
         print(avg_median_workload_srez_dept.to_string())
     else:
         print(
@@ -433,8 +434,8 @@ if not df_srez.empty:
     if 'ШГО – вид оборудования' in df_srez.columns and 'Общая трудоемкость' in df_srez.columns:
         print("\nСредняя и медианная загрузка по ШГО (Срезы):")
         avg_median_workload_srez_shgo = \
-        df_srez.dropna(subset=['ШГО – вид оборудования', 'Общая трудоемкость']).groupby('ШГО – вид оборудования')[
-            'Общая трудоемкость'].agg(['mean', 'median']).sort_values(by='mean', ascending=False)
+            df_srez.dropna(subset=['ШГО – вид оборудования', 'Общая трудоемкость']).groupby('ШГО – вид оборудования')[
+                'Общая трудоемкость'].agg(['mean', 'median']).sort_values(by='mean', ascending=False)
         print(avg_median_workload_srez_shgo.to_string())
     else:
         print(
@@ -448,9 +449,9 @@ if not df_fakt.empty:
     if 'main_department' in df_fakt.columns and 'sub_department' in df_fakt.columns and 'Закрытая трудоемкость' in df_fakt.columns:
         print("\nСредняя и медианная загрузка по участкам (ОтметкаФакта):")
         avg_median_workload_fakt_dept = \
-        df_fakt.dropna(subset=['main_department', 'sub_department', 'Закрытая трудоемкость']).groupby(
-            ['main_department', 'sub_department'])['Закрытая трудоемкость'].agg(['mean', 'median']).sort_values(
-            by='mean', ascending=False)
+            df_fakt.dropna(subset=['main_department', 'sub_department', 'Закрытая трудоемкость']).groupby(
+                ['main_department', 'sub_department'])['Закрытая трудоемкость'].agg(['mean', 'median']).sort_values(
+                by='mean', ascending=False)
         print(avg_median_workload_fakt_dept.to_string())
     else:
         print(
@@ -459,8 +460,9 @@ if not df_fakt.empty:
     if 'ШГО – вид оборудования' in df_fakt.columns and 'Закрытая трудоемкость' in df_fakt.columns:
         print("\nСредняя и медианная загрузка по ШГО (ОтметкаФакта):")
         avg_median_workload_fakt_shgo = \
-        df_fakt.dropna(subset=['ШГО – вид оборудования', 'Закрытая трудоемкость']).groupby('ШГО – вид оборудования')[
-            'Закрытая трудоемкость'].agg(['mean', 'median']).sort_values(by='mean', ascending=False)
+            df_fakt.dropna(subset=['ШГО – вид оборудования', 'Закрытая трудоемкость']).groupby(
+                'ШГО – вид оборудования')[
+                'Закрытая трудоемкость'].agg(['mean', 'median']).sort_values(by='mean', ascending=False)
         print(avg_median_workload_fakt_shgo.to_string())
     else:
         print(
@@ -506,7 +508,7 @@ if not df_srez.empty and \
 
     if not shifts_df.empty:
         shifts_df['Сдвиг в днях'] = (
-                    shifts_df['Дата и время начала операции'] - shifts_df['Предыдущая дата начала операции']).dt.days
+                shifts_df['Дата и время начала операции'] - shifts_df['Предыдущая дата начала операции']).dt.days
 
         shifts_df['Направление сдвига'] = shifts_df['Сдвиг в днях'].apply(
             lambda x: 'Опережение' if x < 0 else ('Задержка' if x > 0 else 'Без сдвига')
@@ -682,6 +684,8 @@ except ImportError:
     prophet_available = False
 
 try:
+    import matplotlib.pyplot as plt
+
     matplotlib_available = True
 except ImportError:
     matplotlib_available = False
@@ -697,26 +701,34 @@ if prophet_available and not df_srez.empty and \
 
     df_forecast_analysis['Дата записи среза'] = pd.to_datetime(df_forecast_analysis['Дата записи среза'],
                                                                errors='coerce')
-    df_forecast_analysis.dropna(subset=['Дата записи среза'], inplace=True)
+    df_forecast_analysis.dropna(subset=['Дата записи среза'], inplace=True)  # ИСПРАВЛЕНИЕ: БЫЛО 'Дата записи среza'
     df_forecast_analysis = df_forecast_analysis[df_forecast_analysis['Общая трудоемкость'] >= 0]
 
     if not df_forecast_analysis.empty:
-        daily_workload = df_forecast_analysis.groupby('Дата записи среза')['Общая трудоемкость'].sum().reset_index()
-        daily_workload.columns = ['ds', 'y']
+        monthly_workload = df_forecast_analysis.groupby(
+            df_forecast_analysis['Дата записи среза'].dt.to_period('M')).sum(
+            numeric_only=True
+        ).reset_index()
+        monthly_workload['Дата записи среза'] = monthly_workload['Дата записи среза'].dt.to_timestamp()
+        monthly_workload = monthly_workload[['Дата записи среза', 'Общая трудоемкость']]
+        monthly_workload.columns = ['ds', 'y']
 
-        daily_workload['y'] = np.log1p(daily_workload['y'])
+        print("\nСтатистика агрегированной ЕЖЕМЕСЯЧНОЙ трудоемкости (monthly_workload для Prophet):")
+        print(monthly_workload['y'].describe().to_string())
+        print(f"Первые 5 значений monthly_workload:\n{monthly_workload.head().to_string(index=False)}")
+        print(f"Последние 5 значений monthly_workload:\n{monthly_workload.tail().to_string(index=False)}")
 
         if matplotlib_available:
-            print("\nВизуализация исторических данных 'Общая трудоемкость' (после лог-трансформации):")
+            print("\nВизуализация исторических данных 'Общая трудоемкость' (ЕЖЕМЕСЯЧНО):")
             plt.figure(figsize=(12, 6))
-            plt.plot(daily_workload['ds'], daily_workload['y'])
-            plt.title('Историческая Общая Трудоемкость (лог-трансформация) по датам')
+            plt.plot(monthly_workload['ds'], monthly_workload['y'])
+            plt.title('Историческая Общая Трудоемкость (ЕЖЕМЕСЯЧНО) по датам')
             plt.xlabel('Дата')
-            plt.ylabel('Лог(Общая трудоемкость + 1)')
+            plt.ylabel('Общая трудоемкость')
             plt.grid(True)
             plt.show()
 
-        train_data = daily_workload.copy()
+        train_data = monthly_workload.copy()
 
         if not train_data.empty:
             print(f"\nПоследняя дата в обучающих данных: {train_data['ds'].max().strftime('%Y-%m-%d')}")
@@ -725,26 +737,27 @@ if prophet_available and not df_srez.empty and \
             print("Нет данных для обучения модели. Прогноз невозможен.")
         else:
             model = Prophet(
-                weekly_seasonality=True,
+                weekly_seasonality=False,  # Отключаем, если прогнозируем месячные данные
                 daily_seasonality=False,
-                yearly_seasonality=False,
-                changepoint_prior_scale=0.01
+                yearly_seasonality=False,  # <--- ИЗМЕНЕНИЕ ЗДЕСЬ: ОТКЛЮЧАЕМ ГОДОВУЮ СЕЗОННОСТЬ
+                changepoint_prior_scale=0.05
             )
             model.fit(train_data)
 
-            future_dates = model.make_future_dataframe(periods=30, include_history=False, freq='D')
+            # Прогнозируем на 3 месяца вперед с месячной частотой ('MS' - Month Start)
+            future_dates = model.make_future_dataframe(periods=3, include_history=False, freq='MS')
 
-            if future_dates.empty or future_dates['ds'].min() > pd.to_datetime('2025-03-03'):
+            if future_dates.empty or future_dates['ds'].min() > pd.to_datetime('2025-05-01'):
                 print(
                     f"Не удалось создать осмысленные будущие даты для прогноза. Проверьте диапазон исторических данных. Последняя дата в обучающей выборке: {train_data['ds'].max() if not train_data.empty else 'N/A'}")
             else:
                 forecast = model.predict(future_dates)
 
-                forecast['yhat'] = np.maximum(0, np.expm1(forecast['yhat']))
-                forecast['yhat_lower'] = np.maximum(0, np.expm1(forecast['yhat_lower']))
-                forecast['yhat_upper'] = np.maximum(0, np.expm1(forecast['yhat_upper']))
+                forecast['yhat'] = np.maximum(0, forecast['yhat'])
+                forecast['yhat_lower'] = np.maximum(0, forecast['yhat_lower'])
+                forecast['yhat_upper'] = np.maximum(0, forecast['yhat_upper'])
 
-                forecast_start_date_target = pd.to_datetime('2025-02-02')
+                forecast_start_date_target = pd.to_datetime('2025-02-01')
                 if forecast['ds'].min() > forecast_start_date_target:
                     print(
                         f"ВНИМАНИЕ: Прогноз начинается с {forecast['ds'].min().strftime('%Y-%m-%d')}, а не с {forecast_start_date_target.strftime('%Y-%m-%d')}, так как обучающие данные заканчиваются раньше.")
@@ -756,8 +769,9 @@ if prophet_available and not df_srez.empty and \
                                             'Верхняя граница (95% ДИ)']
 
                 print(
-                    f"\nПрогноз общей трудоемкости на ближайшие {len(forecast_display)} дней (начиная с первой доступной даты после 01.02.2025):")
+                    f"\nПрогноз ОБЩЕЙ ТРУДОЕМКОСТИ на ближайшие {len(forecast_display)} МЕСЯЦЕВ (начиная с первой доступной даты после 01.02.2025):")
                 print(forecast_display.to_string(index=False))
+
     else:
         print("Нет достаточных данных для построения прогноза после фильтрации строк с отсутствующими значениями.")
 else:
